@@ -1,4 +1,4 @@
-FROM node:16-alpine3.14
+FROM node:16-alpine3.16
 
 # Installs latest Chromium package.
 RUN apk add --no-cache \
@@ -7,7 +7,10 @@ RUN apk add --no-cache \
       freetype \
       harfbuzz \
       ca-certificates \
-      ttf-freefont
+      ttf-freefont \
+      py3-pip \
+      g++ \
+      make
 
 # Tell Puppeteer to skip installing Chrome. We'll be using the installed package.
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
