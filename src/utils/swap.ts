@@ -45,7 +45,7 @@ export const Swap = async (
   await Forever(
     async () => {
       console.log(`Broadcasting transaction ${swapTxHash}`);
-      await router.BroadcastRawTransaction(signedSwapTxWithGasRaw);
+      await wallet.SendSignedTransaction(signedSwapTxWithGasRaw);
       console.log(`Token Swap Transaction has been sent: ${swapTxHash}`);
     },
     2,
