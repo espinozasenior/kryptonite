@@ -1,39 +1,37 @@
-FROM node:16-alpine3.16
+FROM node:lts AS builder
 
 # Installs latest Chromium package.
-RUN apk add --no-cache \
+RUN apt-get -qy update && apt-get -qy install openssl \
       chromium \
-      nss \
-      freetype \
-      harfbuzz \
       ca-certificates \
-      ttf-freefont \
-      py3-pip \
       g++ \
-      make
-
+      make \
+      libssl-dev
 # Tell Puppeteer to skip installing Chrome. We'll be using the installed package.
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
     PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
 
-# Add user so we don't need --no-sandbox.
-RUN addgroup -S pptruser && adduser -S -g pptruser pptruser \
-    && mkdir -p /home/pptruser/Downloads /app \
-    && chown -R pptruser:pptruser /home/pptruser \
-    && chown -R pptruser:pptruser /app
+# Create app directory
+WORKDIR /app
 
-# Run everything after as non-privileged user.
-USER pptruser
+# A wildcard is used to ensure both package.json AND package-lock.json are copied
+COPY package*.json ./
+COPY prisma ./prisma/
 
-RUN mkdir -p /home/pptruser/pravinba9495/kryptonite
-COPY dist /home/pptruser/pravinba9495/kryptonite
-COPY package.json /home/pptruser/pravinba9495/kryptonite
-COPY package-lock.json /home/pptruser/pravinba9495/kryptonite
-WORKDIR /home/pptruser/pravinba9495/kryptonite
-
-USER root
+# Install app dependencies
 RUN npm install
 
-USER pptruser
+COPY . .
 
-CMD node index.js
+RUN npm run build
+
+FROM node:lts
+
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/package*.json ./
+COPY --from=builder /app/dist ./dist
+# 👇 copy prisma directory
+COPY --from=builder /app/prisma ./prisma
+
+# 👇 new migrate and start app script
+CMD [  "npm", "run", "start:migrate:prod" ]
