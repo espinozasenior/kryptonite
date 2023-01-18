@@ -110,6 +110,39 @@ export class Wallet {
     return gas;
   }
 
+
+  /**
+   * 
+   * @returns 
+   */
+  async GasLimit(): Promise<any> {
+    const { gasLimit } = await Web3Client.eth.getBlock("latest");
+    return gasLimit;
+  }
+
+  async GetGasPrice(): Promise<any> {
+    const gasPrice = await Web3Client.eth.getGasPrice();
+    return gasPrice;
+  }
+
+  async GetGasPriceAveraged(): Promise<any> {
+    let gasPrices = []
+    let gases = []
+    let pendingTransactions = await Web3Client.eth.getPendingTransactions()
+    // for tx in pending_transactions["result"[:10]]:
+    //   gas_prices.append(int((tx["gasPrice"]),16))
+    //   gases.append(int((tx["gas"]),16))
+
+    // print("Average:")
+    // print("-"*80)
+    // print("gasPrice: ", statistics.mean(gas_prices))
+    // print(" ")
+    // print("Median:")
+    // print("-"*80)
+    // print("gasPrice: ", statistics.median(gas_prices))
+    return pendingTransactions;
+  }
+
   async GetTransactionReceipt(txHash: string): Promise<boolean> {
     let retries = 0;
     while (retries < 50) {
