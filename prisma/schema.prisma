@@ -1,0 +1,72 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+  previewFeatures = ["fullTextSearch"]
+  binaryTargets = ["rhel-openssl-1.0.x", "linux-arm64-openssl-1.0.x"]
+}
+
+datasource db {
+  url      = env("DATABASE_URL")
+  provider = "postgresql"
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  username  String   @unique
+  tokens    Token[]
+  orders    Order[]
+  @@map("users")
+}
+
+model Network {
+  id       String   @id @default(cuid())
+  chainId  Int      @unique
+  name     String
+  symbol   String
+  rpc      String
+  orders    Order[]
+  tokens    Token[]
+  @@map("networks")
+}
+
+model Order {
+  id            String    @id @default(cuid())
+  network       Network   @relation(fields: [networkId], references: [id], onDelete: Cascade)
+  networkId     String
+  token         Token     @relation(fields: [tokenId], references: [id], onDelete: Cascade)
+  tokenId       String    
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId        String
+  breakeven     Float     @default(1)
+  amount        Float     @default(0)
+  strategy      Json
+  sl            Float     @default(0)
+  tp            Float     @default(99999999)
+  active        Boolean   @default(true)
+  buyNow        Boolean   @default(false)
+  sellNow       Boolean   @default(false)
+  createdAt     DateTime  @default(now()) @map(name: "created_at")
+
+  @@map("orders")
+}
+
+model Token {
+  id            String    @id @default(cuid())
+  network       Network   @relation(fields: [networkId], references: [id], onDelete: Cascade)
+  networkId     String
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId        String
+  name          String
+  decimals      Int
+  symbol        String
+  address       String   @unique 
+  logoUri       String
+  buySlippage   Float
+  sellSlippage  Float
+  orders        Order[]
+
+  @@map("tokens")
+}
