@@ -1,14 +1,8 @@
 import { Args } from "./utils/flags";
 import Telegram from "./api/telegram";
 import { Wait } from "./utils/wait";
-import { NewClient } from "./redis";
 import { Wallet } from "./api/wallet";
 import { Router } from "./api/oneinch";
-import {
-  GetTradeSignal,
-  InitTradingViewTechnicals,
-  IsPuppeteerReady,
-} from "./utils/puppet";
 import { InitNgRok } from "./utils/ngrok";
 import { GetCurrentStatus } from "./utils/status";
 import { Approve } from "./utils/approve";
@@ -73,7 +67,6 @@ let INSTANT_SELL = true;
     let currentStatus = "";
     let signal = "";
 
-    const redis = await NewClient(Args.redisAddress);
     const wallet = new Wallet(Args.publicKey, Args.privateKey, Args.chainId);
     const router = new Router(Args.chainId);
 
@@ -123,11 +116,6 @@ let INSTANT_SELL = true;
 
     const t = 5 * 60;
     await Forever(async () => {
-      await redis.setEx(
-        "LAST_SIGNAL_UPDATE",
-        t,
-        new Date().getTime().toString()
-      );
     }, 2);
 
     if (Args.preAuth) {
@@ -243,44 +231,6 @@ let INSTANT_SELL = true;
       }, 2);
 
       await Forever(async () => {
-        signal = await GetTradeSignal();
-      }, 2);
-
-      if (
-        (signal == "BUY") ||
-        (signal == "SELL") ||
-        (signal == "NEUTRAL")
-      ) {
-        await Forever(async () => {
-          await redis.setEx(
-            "LAST_SIGNAL_UPDATE",
-            t,
-            new Date().getTime().toString()
-          );
-        }, 2);
-      }
-
-      if (
-        ((signal == "BUY") || (signal == "SELL")) &&
-        LAST_TELEGRAM_SIGNAL !== signal
-      ) {
-        await Forever(async () => {
-          await Telegram.SendMessage(Args.botToken, Args.chatId, signal);
-        }, 2);
-      }
-      LAST_TELEGRAM_SIGNAL = signal;
-
-      await Forever(async () => {
-        const exists = await redis.exists("LAST_SIGNAL_UPDATE");
-        if (exists !== 1) {
-          await Telegram.SendMessage(
-            Args.botToken,
-            Args.chatId,
-            `Did not receive valid signal for more than ${t} seconds.`
-          );
-        }
-      }, 2);
-
       await Forever(async () => {
         stableTokenCurrentPrice = await Kraken.GetCoinPrice(
           Args.stableTokenTickerKraken
@@ -294,13 +244,6 @@ let INSTANT_SELL = true;
       INSTANT_SELL = false;
 
       let COMMAND = "";
-      await Forever(async () => {
-        COMMAND =
-          (await redis.hGet(
-            `${Args.stableToken}_${Args.targetToken}`,
-            "NextAction"
-          )) || "";
-      }, 2);
 
       if (COMMAND === "BUY") {
         INSTANT_BUY = true;
@@ -315,9 +258,11 @@ let INSTANT_SELL = true;
       }
 
       await Forever(async () => {
-        await redis.hDel(
-          `${Args.stableToken}_${Args.targetToken}`,
-          "NextAction"
+        stableTokenBalance = await wallet.GetTokenBalance(
+          stableTokenContractAddress
+        );
+        targetTokenBalance = await wallet.GetTokenBalance(
+          targetTokenContractAddress
         );
       }, 2);
 
@@ -417,40 +362,8 @@ let INSTANT_SELL = true;
             stableTokenBalance,
             targetTokenContractAddress
           );
-
           await Forever(async () => {
-            await redis.hSet(
-              `${Args.stableToken}_${Args.targetToken}`,
-              "BuyLimitPrice",
-              0
-            );
-            await redis.hSet(
-              `${Args.stableToken}_${Args.targetToken}`,
-              "StopLimitPrice",
-              0
-            );
-            await redis.hSet(
-              `${Args.stableToken}_${Args.targetToken}`,
-              "BuyBackLimitPrice",
-              9999999999
-            );
-            await redis.hSet(
-              `${Args.stableToken}_${Args.targetToken}`,
-              "SellLimitPrice",
-              9999999999
-            );
-            await redis.hSet(
-              `${Args.stableToken}_${Args.targetToken}`,
-              "LastBuyPrice",
-              targetTokenCurrentPrice
-            );
-          }, 2);
-
-          await Forever(async () => {
-            stableTokenBalance = await wallet.GetTokenBalance(
-              stableTokenContractAddress
-            );
-            targetTokenBalance = await wallet.GetTokenBalance(
+            const currentSoldTokenBalance = await wallet.GetTokenBalance(
               targetTokenContractAddress
             );
             console.log(
@@ -499,90 +412,6 @@ let INSTANT_SELL = true;
               JSON.stringify(trade, null, 2)
             );
           }, 2);
-
-          currentStatus = "WAITING_TO_SELL";
-        } else {
-          console.log(
-            `HOLD (Current Price: $${targetTokenCurrentPrice}, Buy Limit Price: $${buyLimitPrice}, Buy Back Limit Price: $${buyBackLimitPrice}, Slippage Allowed: +${Args.slippagePercent}%, Current Portfolio Value: $${currentPortfolioValue}, Minimum Return: ${toTokenAmount} ${quoteResponseDto.toToken.symbol})`
-          );
-        }
-      } else if (currentStatus === "WAITING_TO_SELL") {
-        let lastBuyPrice = 0;
-        let stopLimitPrice = 0;
-        let sellLimitPrice = 9999999999;
-
-        await Forever(async () => {
-          lastBuyPrice =
-            Number(
-              await redis.hGet(
-                `${Args.stableToken}_${Args.targetToken}`,
-                "LastBuyPrice"
-              )
-            ) || 0;
-
-          if (lastBuyPrice === 0) {
-            const newLastBuyPrice = targetTokenCurrentPrice;
-            await Forever(async () => {
-              await redis.hSet(
-                `${Args.stableToken}_${Args.targetToken}`,
-                "LastBuyPrice",
-                newLastBuyPrice
-              );
-            }, 2);
-            lastBuyPrice = newLastBuyPrice;
-          }
-
-          stopLimitPrice =
-            Number(
-              await redis.hGet(
-                `${Args.stableToken}_${Args.targetToken}`,
-                "StopLimitPrice"
-              )
-            ) || 0;
-
-          sellLimitPrice =
-            Number(
-              await redis.hGet(
-                `${Args.stableToken}_${Args.targetToken}`,
-                "SellLimitPrice"
-              )
-            ) || 9999999999;
-        }, 2);
-
-        const params = {
-          fromTokenAddress: targetTokenContractAddress,
-          toTokenAddress: stableTokenContractAddress,
-          amount: targetTokenBalance.toString(),
-        };
-        let quoteResponseDto: any = {};
-
-        await Forever(async () => {
-          quoteResponseDto = await router.GetQuote(params);
-        }, 2);
-
-        const targetTokenAmnt =
-          Number(targetTokenBalance) /
-          Math.pow(10, quoteResponseDto.fromToken.decimals);
-        const currentPortfolioValue = targetTokenAmnt * targetTokenCurrentPrice;
-        const toTokenAmount =
-          (1 - Args.slippagePercent / 100) *
-          (Number(quoteResponseDto.toTokenAmount) /
-            Math.pow(10, quoteResponseDto.toToken.decimals));
-        const toTokenValue = toTokenAmount * stableTokenCurrentPrice;
-        const actualSlippage =
-          ((currentPortfolioValue - toTokenValue) * 100) /
-          currentPortfolioValue;
-        const profitOrLossPercent =
-          Number(
-            (
-              ((targetTokenCurrentPrice - lastBuyPrice) * 100) /
-              lastBuyPrice
-            ).toFixed(2)
-          ) - actualSlippage;
-
-        const newDate = new Date().getDate();
-        if (newDate !== LAST_DATE) {
-          LAST_DATE = newDate;
           await Forever(async () => {
             await Telegram.SendMessage(
               Args.botToken,
@@ -645,81 +474,6 @@ let INSTANT_SELL = true;
             targetTokenBalance,
             stableTokenContractAddress
           );
-
-          await Forever(async () => {
-            await redis.hSet(
-              `${Args.stableToken}_${Args.targetToken}`,
-              "BuyLimitPrice",
-              0
-            );
-            await redis.hSet(
-              `${Args.stableToken}_${Args.targetToken}`,
-              "StopLimitPrice",
-              0
-            );
-            await redis.hSet(
-              `${Args.stableToken}_${Args.targetToken}`,
-              "BuyBackLimitPrice",
-              9999999999
-            );
-            await redis.hSet(
-              `${Args.stableToken}_${Args.targetToken}`,
-              "SellLimitPrice",
-              9999999999
-            );
-            await redis.hSet(
-              `${Args.stableToken}_${Args.targetToken}`,
-              "LastBuyPrice",
-              0
-            );
-          }, 2);
-
-          await Forever(async () => {
-            stableTokenBalance = await wallet.GetTokenBalance(
-              stableTokenContractAddress
-            );
-            targetTokenBalance = await wallet.GetTokenBalance(
-              targetTokenContractAddress
-            );
-            console.log(
-              `Refreshed Balances: ${Args.stableToken}: ${stableTokenBalance}, ${Args.targetToken}: ${targetTokenBalance}`
-            );
-            if (
-              !targetTokenBalance.eq(Web3.utils.toBN(0)) ||
-              stableTokenBalance.eq(Web3.utils.toBN(0))
-            ) {
-              await Promise.reject(`Awaiting tokens from the router`);
-            }
-          }, 2);
-
-          let bal = stableTokenBalance;
-          let balAmnt =
-            Number(bal) / Math.pow(10, quoteResponseDto.toToken.decimals);
-
-          await Forever(async () => {
-            stableTokenCurrentPrice = await Kraken.GetCoinPrice(
-              Args.stableTokenTickerKraken
-            );
-            targetTokenCurrentPrice = await Kraken.GetCoinPrice(
-              Args.targetTokenTickerKraken
-            );
-          }, 2);
-
-          const trade = {
-            date: new Date().getTime(),
-            sold: Args.targetToken,
-            soldAmount: targetTokenAmnt,
-            soldValue: targetTokenAmnt * targetTokenCurrentPrice,
-            bought: Args.stableToken,
-            boughtAmount: balAmnt,
-            boughtValue: balAmnt * stableTokenCurrentPrice,
-            tradeLossPercent:
-              ((balAmnt * stableTokenCurrentPrice -
-                targetTokenAmnt * targetTokenCurrentPrice) *
-                100) /
-              (targetTokenAmnt * targetTokenCurrentPrice),
-          };
-
           await Forever(async () => {
             await Telegram.SendMessage(
               Args.botToken,

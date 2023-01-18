@@ -12,7 +12,6 @@ export const Args = {
   targetTokenTickerKraken: ENV.TARGET_TOKEN_TICKER_KRAKEN || "MATICUSD",
   botToken: ENV.BOT_TOKEN || "",
   password: ENV.PASSWORD || "kryptonite",
-  redisAddress: ENV.REDIS_ADDRESS || "",
   chainId: Number(ENV.CHAIN_ID || 137),
   preAuth: ENV.PRE_AUTH ? Boolean(ENV.PRE_AUTH) : false,
   slippagePercent: Number(ENV.SLIPPAGE_PERCENT || 1),
