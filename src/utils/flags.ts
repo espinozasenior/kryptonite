@@ -8,6 +8,7 @@ export const Args = {
   chartInterval: ENV.CHART_INTERVAL || "1h",
   stableToken: ENV.STABLE_TOKEN || "USDC",
   targetToken: ENV.TARGET_TOKEN || "WMATIC",
+  targetTokenAddress: ENV.TARGET_TOKEN_ADDRESS || "WMATIC",
   stableTokenTickerKraken: ENV.STABLE_TOKEN_TICKER_KRAKEN || "USDCUSD",
   targetTokenTickerKraken: ENV.TARGET_TOKEN_TICKER_KRAKEN || "MATICUSD",
   botToken: ENV.BOT_TOKEN || "",
@@ -17,4 +18,5 @@ export const Args = {
   slippagePercent: Number(ENV.SLIPPAGE_PERCENT || 1),
   port: Number(ENV.PORT || 8080),
   trace: ENV.TRACE ? Boolean(ENV.TRACE) : false,
+  oneinchHostname: ENV.ONEINCH_HOSTNAME || "https://api.1inch.io/v5.0"
 };
