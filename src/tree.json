@@ -1,0 +1,51 @@
+{
+  "branches": [
+    {
+      "decisions": [
+        {
+          "property": "sellNow",
+          "operation": "===",
+          "value": true
+        }
+      ],
+      "node": [
+        {
+          "result": "Sell All"
+        }
+      ]
+    },
+    {
+      "decisions": [
+        {
+          "property": "buyNow",
+          "operation": "===",
+          "value": true
+        }
+      ],
+      "node": [
+        {
+          "result": "Buy"
+        }
+      ]
+    },
+    {
+      "decisions": [
+        {
+          "property": "currentBalance",
+          "operation": ">",
+          "value": 1
+        },
+        {
+          "property": "currentPrice",
+          "operation": ">",
+          "value": 0.02508
+        }
+      ],
+      "node": [
+        {
+          "result": "Sell Profit"
+        }
+      ]
+    }
+  ]
+}

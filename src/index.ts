@@ -1,17 +1,20 @@
+require("dotenv").config();
 import { Args } from "./utils/flags";
 import Telegram from "./api/telegram";
 import { Wait } from "./utils/wait";
+import { UpdateNetowrks } from "./networks";
 import { Wallet } from "./api/wallet";
 import { Router } from "./api/oneinch";
 import { InitNgRok } from "./utils/ngrok";
-import { GetCurrentStatus } from "./utils/status";
-import { Approve } from "./utils/approve";
 import { Alternative } from "./api/alternative";
-import { Kraken } from "./api/kraken";
+import { DexScreener } from "./api/dexscreener";
+import { Chain } from "./utils/chain";
 import { Forever } from "./utils/forever";
 import { PrepareForSwap } from "./utils/prepare";
-import { Gas } from "./api/gas";
+import { prismaClient } from "./db";
 import Web3 from "web3";
+import _ from "lodash"
+const ODT = require("operational-decision-tree");
 
 process.on("uncaughtException", async (error) => {
   console.error(error);
@@ -47,16 +50,14 @@ process.on("unhandledRejection", async (error) => {
   }
 });
 
-let LAST_TELEGRAM_SIGNAL = "";
 const START_TIME = new Date().getTime();
-let LAST_DATE = 0;
-let INSTANT_BUY = false;
-let INSTANT_SELL = true;
 
 (async () => {
   try {
     // ====== BEGIN (Main Steps) ======= //
-
+    // Update network's sources
+    const net = await UpdateNetowrks()
+    
     let routerAddress = "";
     let tokens: any[] = [];
     let ngRokURL = "";
@@ -66,10 +67,21 @@ let INSTANT_SELL = true;
     let targetTokenCurrentPrice = 0;
     let currentStatus = "";
     let signal = "";
+    let chainName = "";
+    let wbtcPrice = 0;
 
     const wallet = new Wallet(Args.publicKey, Args.privateKey, Args.chainId);
-    const router = new Router(Args.chainId);
-
+    const router = new Router(Args.chainId, Args.oneinchHostname);
+    const db = await prismaClient();
+    const myToken = await db.token.findUnique({
+      where: {
+        address: Args.targetTokenAddress
+      },
+      include: {
+        orders: true,
+      }
+    })
+    console.log(myToken?.symbol)
     await Forever(async () => {
       routerAddress = await router.GetContractAddress();
       tokens = await router.GetSupportedTokens();
@@ -86,8 +98,11 @@ let INSTANT_SELL = true;
 
     const stableTokenContractAddress =
       tokens.find((token) => token.symbol === Args.stableToken)?.address || "";
-    const targetTokenContractAddress =
-      tokens.find((token) => token.symbol === Args.targetToken)?.address || "";
+    const stableTokenContractDecimals =
+      tokens.find((token) => token.symbol === Args.stableToken)?.decimals || 0;
+    // const targetTokenContractAddress =
+    //   tokens.find((token) => token.symbol === Args.targetToken)?.address || "";
+    const targetTokenContractAddress = Args.targetTokenAddress
     if (
       stableTokenContractAddress === "" ||
       targetTokenContractAddress === ""
@@ -104,94 +119,10 @@ let INSTANT_SELL = true;
       );
     }, 2);
 
-    InitTradingViewTechnicals(Args.targetTokenTickerKraken, Args.chartInterval);
-    while (true) {
-      if (IsPuppeteerReady()) {
-        break;
-      } else {
-        console.log("Waiting for puppeteer to be ready");
-        await Wait(2);
-      }
-    }
-
-    const t = 5 * 60;
     await Forever(async () => {
+      chainName = await Chain(Args.chainId)
     }, 2);
 
-    if (Args.preAuth) {
-      await Forever(async () => {
-        const stableTokenAllowance = await router.GetApprovedAllowance(
-          stableTokenContractAddress,
-          wallet.Address
-        );
-        const targetTokenAllowance = await router.GetApprovedAllowance(
-          targetTokenContractAddress,
-          wallet.Address
-        );
-        if (stableTokenAllowance.gte(stableTokenBalance)) {
-          console.log(
-            `Router already preauthorized to spend ${Args.stableToken}`
-          );
-        } else {
-          console.log(`Preauthorizing router for ${Args.stableToken}`);
-          let approveTxHash = "";
-          await Forever(async () => {
-            approveTxHash = await Approve(
-              wallet,
-              router,
-              stableTokenContractAddress,
-              "-1"
-            );
-          }, 2);
-          if (approveTxHash === "") {
-            console.error(`Approve transaction for ${Args.stableToken} failed`);
-            await Forever(async () => {
-              await Telegram.SendMessage(
-                Args.botToken,
-                Args.chatId,
-                `[STOPPING] Approve transaction for ${Args.stableToken} failed`
-              );
-            }, 2);
-            process.exit(1);
-          } else {
-            console.error(
-              `Approve transaction ${approveTxHash} for ${Args.stableToken} succeeded`
-            );
-          }
-        }
-        if (targetTokenAllowance.gte(targetTokenBalance)) {
-          console.log(
-            `Router already preauthorized to spend ${Args.targetToken}`
-          );
-        } else {
-          console.log(`Preauthorizing router for ${Args.targetToken}`);
-          let approveTxHash = "";
-          await Forever(async () => {
-            approveTxHash = await Approve(
-              wallet,
-              router,
-              targetTokenContractAddress,
-              "-1"
-            );
-          }, 2);
-          if (approveTxHash === "") {
-            console.error(`Approve transaction for ${Args.targetToken} failed`);
-            await Forever(async () => {
-              await Telegram.SendMessage(
-                Args.botToken,
-                Args.chatId,
-                `[STOPPING] Approve transaction for ${Args.targetToken} failed`
-              );
-            }, 2);
-            process.exit(1);
-          } else {
-            console.error(
-              `Approve transaction ${approveTxHash} for ${Args.targetToken} succeeded`
-            );
-          }
-        }
-      }, 2);
-    }
 
     // ====== END (Main Steps) ======= //
 
@@ -210,14 +141,6 @@ let INSTANT_SELL = true;
       );
 
       await Forever(async () => {
-        currentStatus = GetCurrentStatus(
-          stableTokenBalance,
-          targetTokenBalance
-        );
-        console.log(`Current Status: ${currentStatus}`);
-      }, 2);
-
-      await Forever(async () => {
         const { fearGreedIndex, fearGreedIndexClassification } =
           await Alternative.GetCryptoFearIndex();
         console.log(
@@ -226,36 +149,27 @@ let INSTANT_SELL = true;
       }, 2);
 
       await Forever(async () => {
-        const gasPrice = await Gas.GetGasPrice(Args.chainId);
+        const gasPrice = await wallet.GetGasPrice()
         console.log(`Current Gas Price (Rapid): ${gasPrice} (wei)`);
       }, 2);
 
       await Forever(async () => {
-      await Forever(async () => {
-        stableTokenCurrentPrice = await Kraken.GetCoinPrice(
-          Args.stableTokenTickerKraken
+        stableTokenCurrentPrice = await DexScreener.GetCoinPrice(
+          stableTokenContractAddress,
+          chainName
         );
-        targetTokenCurrentPrice = await Kraken.GetCoinPrice(
-          Args.targetTokenTickerKraken
+        console.log(`Stable current price ${stableTokenCurrentPrice}`);
+        targetTokenCurrentPrice = await DexScreener.GetCoinPrice(
+          targetTokenContractAddress,
+          chainName
         );
+        console.log(`Target current price ${targetTokenCurrentPrice}`);
+        wbtcPrice = await DexScreener.GetCoinPrice(
+          "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599",
+          "ethereum"
+        );
+        console.log(`BTC current price ${wbtcPrice}`);
       }, 2);
-
-      INSTANT_BUY = false;
-      INSTANT_SELL = false;
-
-      let COMMAND = "";
-
-      if (COMMAND === "BUY") {
-        INSTANT_BUY = true;
-      } else {
-        INSTANT_BUY = false;
-      }
-
-      if (COMMAND === "SELL") {
-        INSTANT_SELL = true;
-      } else {
-        INSTANT_SELL = false;
-      }
 
       await Forever(async () => {
         stableTokenBalance = await wallet.GetTokenBalance(
@@ -266,244 +180,209 @@ let INSTANT_SELL = true;
         );
       }, 2);
 
-      if (Args.mode === "AUTO") {
-        INSTANT_BUY = false;
-        INSTANT_SELL = false;
+      /** Implement here decition's tree */
+      const order = await db.order.findUnique({
+        where: {
+          id: myToken?.orders[0].id
+        }
+      })
+
+      const treeData = order?.strategy
+
+      const orderBook = {
+        stableTokenBalance: Number(stableTokenBalance) / Math.pow(10, stableTokenContractDecimals),
+        targetTokenBalance: Number(targetTokenBalance) / Math.pow(10, myToken?.decimals as number),
+        currentPrice: targetTokenCurrentPrice,
+        targetTokenBagValue: (Number(targetTokenBalance) / Math.pow(10, myToken?.decimals as number)) * targetTokenCurrentPrice,
+        breakeven: order?.breakeven,
+        tp: order?.tp,
+        sl: order?.sl,
+        sellNow: order?.sellNow,
+        buyNow: order?.buyNow,
+        amount: order?.amount,
+        active: order?.active
       }
 
-      if (currentStatus === "WAITING_TO_BUY") {
-        let buyLimitPrice = 0;
-        let buyBackLimitPrice = 9999999999;
-        await Forever(async () => {
-          buyLimitPrice =
-            Number(
-              await redis.hGet(
-                `${Args.stableToken}_${Args.targetToken}`,
-                "BuyLimitPrice"
-              )
-            ) || 0;
-          buyBackLimitPrice =
-            Number(
-              await redis.hGet(
-                `${Args.stableToken}_${Args.targetToken}`,
-                "BuyBackLimitPrice"
-              )
-            ) || 9999999999;
-        }, 2);
-        const params = {
-          fromTokenAddress: stableTokenContractAddress,
-          toTokenAddress: targetTokenContractAddress,
-          amount: stableTokenBalance.toString(),
-        };
-
-        let quoteResponseDto: any = {};
-        await Forever(async () => {
-          quoteResponseDto = await router.GetQuote(params);
-        }, 2);
-
-        const stableTokenAmnt =
-          Number(stableTokenBalance) /
-          Math.pow(10, quoteResponseDto.fromToken.decimals);
-        const currentPortfolioValue = stableTokenAmnt * stableTokenCurrentPrice;
-        const toTokenAmnt =
-          Number(quoteResponseDto.toTokenAmount) /
-          Math.pow(10, quoteResponseDto.toToken.decimals);
-        const toTokenAmount = (1 - Args.slippagePercent / 100) * toTokenAmnt;
-        const toTokenValue = toTokenAmount * targetTokenCurrentPrice;
-        const actualSlippage =
-          ((currentPortfolioValue - toTokenValue) * 100) /
-          currentPortfolioValue;
-
-        console.log(
-          `Stable Token Balance (${Args.stableToken}): ${stableTokenAmnt} ${Args.stableToken}`
-        );
-        console.log(
-          `Target Token Balance (${Args.targetToken}): ${
-            Number(targetTokenBalance) /
-            Math.pow(10, quoteResponseDto.toToken.decimals)
-          } ${Args.targetToken}`
-        );
-        console.log(
-          `Current Status: ${currentStatus}, Current Mode: ${Args.mode}, Current Signal: ${signal}`
-        );
-
-        const buyLimitReached = buyLimitPrice >= targetTokenCurrentPrice;
-        const buyBackLimitReached =
-          targetTokenCurrentPrice >= buyBackLimitPrice;
-
-        if (
-          (signal == "BUY" &&
-            Args.mode === "AUTO" &&
-            actualSlippage <= Args.slippagePercent + 0.5) ||
-          INSTANT_BUY || ((buyLimitReached || buyBackLimitReached) && Args.mode === "MANUAL")
-        ) {
-          console.log(
-            `BUY (Current Price: $${targetTokenCurrentPrice}, Slippage: ${actualSlippage.toFixed(
-              2
-            )}%, Slippage Allowed: +${
-              Args.slippagePercent
-            }%, Current Portfolio Value: $${currentPortfolioValue}, Minimum Return: ${toTokenAmount} ${
-              quoteResponseDto.toToken.symbol
-            })`
-          );
-
-          await Forever(async () => {
+      var conditionOpts = {
+        populateFunctions: {
+          pnl: function (node: any, comparisions: any, comparison: any, subjectData: any, cb: any) {
+            if (subjectData.entryPrice === 0) cb(null, 0) // Not profit if doesnt exists entry price
+            var pnl = ((subjectData.currentPrice - subjectData.entryPrice) / subjectData.entryPrice) * 100;
+            cb(null, pnl)
+          },
+          goal: function (node: any, comparisions: any, comparison: any, subjectData: any, cb: any) {
+            var goal = ((subjectData.tp - subjectData.currentPrice) / subjectData.currentPrice) * 100;
+            cb(null, goal)
+          },
+          currentBalance: function (node: any, comparisions: any, comparison: any, subjectData: any, cb: any) {
+            cb(null, subjectData.targetTokenBalance)
+          },
+          btcPrice: function (node: any, comparisions: any, comparison: any, subjectData: any, cb: any) {
+            cb(null,  Number(wbtcPrice.toString()))
+          }
+        },
+        runOnHit: {
+          balance: function (node: any, subjectData: any) {
+            console.log(`Current balance ${subjectData.currentBalance}`)
+          },
+          setSL: function (node: any, subjectData: any) {
+            console.log(`Set SL from ${subjectData.sl} to breakeven`)
+          },
+          buyToken: function (node: any, subjectData: any) {
+            console.log("Buying at: "+subjectData.currentPrice)
+            signal = "BUY";
+          },
+          sellToken: function (node: any, subjectData: any) {
+            console.log(`Selling ${subjectData.currentBalance} at ${subjectData.currentPrice}`)
+            signal = "SELL";
+          },
+          sendTelegram: async function (node: any, subjectData: any, message: string) {
             await Telegram.SendMessage(
-              Args.botToken,
-              Args.chatId,
-              `Signal Received: ${signal}`
-            );
-          }, 2);
+                  Args.botToken,
+                  Args.chatId,
+                  `${message}`
+                );
+          }
+        }
+      }
 
+      var DecisionTree = new ODT(conditionOpts)
+      let action:any
+
+      DecisionTree.run(treeData, orderBook, {}, function (err: any, result: any, populated: any) {
+        if (err) console.error("ERROR", err)
+        console.log("RESULT", result)
+        console.log("OrderBook", orderBook)
+        console.log("POPULATED", populated)
+        action = result
+      })
+
+      // Return array objet if there is match else return the strategy's json
+      if (!_.has(action, 'branches')) {
+
+        if (_.has(action[0], 'sellTokenPercent')) {
+          let amount = Web3.utils.toBN(0)
+          if (action[0].sellTokenPercent === 1) {
+            amount = Web3.utils.toBN(targetTokenBalance.toString());
+          } else {
+            let result = (Number(targetTokenBalance) / Math.pow(10, myToken?.decimals as number) * (action[0].sellTokenPercent as number)) * Math.pow(10, myToken?.decimals as number)
+            amount = Web3.utils.toBN(Math.trunc(result));
+          }
+          const slippage = myToken?.sellSlippage as number;
           await PrepareForSwap(
             router,
             wallet,
+            targetTokenContractAddress,
+            amount,
             stableTokenContractAddress,
-            stableTokenBalance,
-            targetTokenContractAddress
+            slippage
           );
           await Forever(async () => {
             const currentSoldTokenBalance = await wallet.GetTokenBalance(
               targetTokenContractAddress
             );
-            console.log(
-              `Refreshed Balances: ${Args.stableToken}: ${stableTokenBalance}, ${Args.targetToken}: ${targetTokenBalance}`
-            );
-            if (
-              targetTokenBalance.eq(Web3.utils.toBN(0)) ||
-              !stableTokenBalance.eq(Web3.utils.toBN(0))
-            ) {
-              await Promise.reject(`Awaiting tokens from the router`);
+
+            if (currentSoldTokenBalance < Web3.utils.toBN(1)) {
+              const orderUpdted = await db.order.update({
+                where: {
+                  id: order?.id,
+                },
+                data: {
+                  active: false,
+                },
+              })
             }
           }, 2);
-
-          let bal = targetTokenBalance;
-          let balAmnt =
-            Number(bal) / Math.pow(10, quoteResponseDto.toToken.decimals);
-
-          await Forever(async () => {
-            stableTokenCurrentPrice = await Kraken.GetCoinPrice(
-              Args.stableTokenTickerKraken
-            );
-            targetTokenCurrentPrice = await Kraken.GetCoinPrice(
-              Args.targetTokenTickerKraken
-            );
-          }, 2);
-
-          const trade = {
-            date: new Date().getTime(),
-            sold: Args.stableToken,
-            soldAmount: stableTokenAmnt,
-            soldValue: stableTokenAmnt * stableTokenCurrentPrice,
-            bought: Args.targetToken,
-            boughtAmount: balAmnt,
-            boughtValue: balAmnt * targetTokenCurrentPrice,
-            tradeLossPercent:
-              ((balAmnt * targetTokenCurrentPrice -
-                stableTokenAmnt * stableTokenCurrentPrice) *
-                100) /
-              (stableTokenAmnt * stableTokenCurrentPrice),
-          };
-
           await Forever(async () => {
             await Telegram.SendMessage(
               Args.botToken,
               Args.chatId,
-              JSON.stringify(trade, null, 2)
-            );
-          }, 2);
-          await Forever(async () => {
-            await Telegram.SendMessage(
-              Args.botToken,
-              Args.chatId,
-              `${new Date().toDateString()}\nCurrent Profit/Loss (Unrealized): ${
-                profitOrLossPercent > 0 ? "+" : ""
-              }${profitOrLossPercent}%`
-            );
-          }, 2);
-        }
-
-        console.log(
-          `Stable Token Balance (${Args.stableToken}): ${
-            Number(stableTokenBalance) /
-            Math.pow(10, quoteResponseDto.toToken.decimals)
-          } ${Args.stableToken}`
-        );
-        console.log(
-          `Target Token Balance (${Args.targetToken}): ${
-            Number(targetTokenBalance) /
-            Math.pow(10, quoteResponseDto.fromToken.decimals)
-          } ${Args.targetToken}`
-        );
-
-        console.log(
-          `Current Status: ${currentStatus}, Current Signal: ${signal}`
-        );
-
-        const sellLimitReached = targetTokenCurrentPrice >= sellLimitPrice;
-        const stopLimitReached = stopLimitPrice >= targetTokenCurrentPrice;
-
-        if (
-          (signal == "SELL" &&
-            Args.mode === "AUTO") ||
-          INSTANT_SELL || ((sellLimitReached || stopLimitReached) && Args.mode === "MANUAL")
-        ) {
-          console.log(
-            `SELL (Current Price: $${targetTokenCurrentPrice}, Last Bought Price: $${lastBuyPrice}, Sell Limit Price: $${sellLimitPrice}, Stop Limit Price: $${stopLimitPrice}, Slippage: ${actualSlippage.toFixed(
-              2
-            )}%, Slippage Allowed: +${
-              Args.slippagePercent
-            }%, Current Portfolio Value: $${currentPortfolioValue}, Minimum Return: ${toTokenAmount} ${
-              quoteResponseDto.toToken.symbol
-            }, ${
-              profitOrLossPercent > 0 ? "Minimum Profit" : "Maximum Loss"
-            }: ${profitOrLossPercent > 0 ? "+" : ""}${profitOrLossPercent}%)`
-          );
-          await Forever(async () => {
-            await Telegram.SendMessage(
-              Args.botToken,
-              Args.chatId,
-              `Signal Received: ${signal}, Profit/Loss: ${profitOrLossPercent}%`
+              `Signal Received: sellTokenPercent ${action[0].sellTokenPercent} `
             );
           }, 2);
 
+        } else if (_.has(action[0], 'buyStablePercent')) {
+          const amount = Web3.utils.toBN(Math.round(Number(stableTokenBalance.toString()) * (action[0].buyStablePercent as number)));
+          const slippage = myToken?.buySlippage as number;
           await PrepareForSwap(
             router,
             wallet,
+            stableTokenContractAddress,
+            amount,
             targetTokenContractAddress,
-            targetTokenBalance,
-            stableTokenContractAddress
+            slippage
           );
           await Forever(async () => {
             await Telegram.SendMessage(
               Args.botToken,
               Args.chatId,
-              JSON.stringify(trade, null, 2)
+              `Signal Received: buyStablePercent`
             );
           }, 2);
-          currentStatus = "WAITING_TO_BUY";
-        } else {
-          console.log(
-            `HOLD (Current Price: $${targetTokenCurrentPrice}, Last Bought Price: $${lastBuyPrice}, Sell Limit Price: $${sellLimitPrice}, Stop Limit Price: $${stopLimitPrice}, Slippage Allowed: +${
-              Args.slippagePercent
-            }%, Current Portfolio Value: $${currentPortfolioValue}, Minimum Return: ${toTokenAmount} ${
-              quoteResponseDto.toToken.symbol
-            }, ${
-              profitOrLossPercent > 0 ? "Minimum Profit" : "Maximum Loss"
-            }: ${profitOrLossPercent > 0 ? "+" : ""}${profitOrLossPercent}%)`
+        } else if (_.has(action[0], 'buyStableAmount')) {
+          const amount = Web3.utils.toBN(Math.round(Number(action[0].buyStableAmount)).toString() + '000000');
+          const slippage = myToken?.buySlippage as number;
+         
+          await PrepareForSwap(
+            router,
+            wallet,
+            stableTokenContractAddress,
+            amount,
+            targetTokenContractAddress,
+            slippage
           );
+          await Forever(async () => {
+            await Telegram.SendMessage(
+              Args.botToken,
+              Args.chatId,
+              `Signal Received: buyStableAmount`
+            );
+          }, 2);
+        } else if (_.has(action[0], 'updateOrderProperty')) {
+          if (action[0].updateOrderProperty === 'sl') {
+            const updateUser = await db.order.update({
+              where: {
+                id: order?.id,
+              },
+              data: {
+                sl: action[0].value,
+              },
+            })
+            await Forever(async () => {
+              await Telegram.SendMessage(
+                Args.botToken,
+                Args.chatId,
+                `Updating SL to ${action[0].value}`
+              );
+            }, 2);
+          }
         }
-      } else {
-        console.log(`Current Status: ${currentStatus}. Nothing to do`);
+
+        // const trade = {
+        //   date: new Date().getTime(),
+        //   sold: Args.stableToken,
+        //   soldAmount: stableTokenAmnt,
+        //   soldValue: stableTokenAmnt * stableTokenCurrentPrice,
+        //   bought: Args.targetToken,
+        //   boughtAmount: balAmnt,
+        //   boughtValue: balAmnt * targetTokenCurrentPrice,
+        //   tradeLossPercent:
+        //     ((balAmnt * targetTokenCurrentPrice -
+        //       stableTokenAmnt * stableTokenCurrentPrice) *
+        //       100) /
+        //     (stableTokenAmnt * stableTokenCurrentPrice),
+        // };
+
+        // await Forever(async () => {
+        //   await Telegram.SendMessage(
+        //     Args.botToken,
+        //     Args.chatId,
+        //     JSON.stringify(trade, null, 2)
+        //   );
+        // }, 2);
+        
       }
-
-      await Forever(async () => {
-        await redis.set(
-          `${Args.stableToken}_${Args.targetToken}_LAST_MODE`,
-          Args.mode
-        );
-      }, 2);
-
+      
       // Here
       const end = new Date().getTime();
       console.log(`\nLoop Time: ${(end - start) / 1000} (sec)`);

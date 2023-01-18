@@ -1,5 +1,8 @@
 import Axios from "axios";
 
+/**
+ * https://docs.kraken.com/rest/#tag/Market-Data/operation/getTickerInformation
+ */
 export class Kraken {
   static GetCoinPrice = async (pair: string): Promise<number> => {
     return Axios.get<number>("https://api.kraken.com/0/public/Ticker", {
@@ -13,7 +16,7 @@ export class Kraken {
         if (response.error.length > 0) {
           return Promise.reject(response.error[0]);
         }
-        return Number(response["result"][pair.toUpperCase()]["c"][0]);
+        return Number(response["result"][pair.toUpperCase()]["p"][0]);
       })
       .catch((error) => {
         if (error.response && error.response.data) {
