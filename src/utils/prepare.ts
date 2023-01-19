@@ -14,7 +14,8 @@ export const PrepareForSwap = async (
   wallet: Wallet,
   fromTokenContractAddress: string,
   fromTokenBalance: BN,
-  toTokenContractAddress: string
+  toTokenContractAddress: string,
+  slippage: number
 ): Promise<void> => {
   let fromTokenAllowance = Web3.utils.toBN(0);
 
@@ -34,10 +35,11 @@ export const PrepareForSwap = async (
       toTokenAddress: toTokenContractAddress,
       amount: fromTokenBalance.toString(),
       fromAddress: wallet.Address,
-      slippage: Args.slippagePercent,
+      slippage: slippage,
       disableEstimate: false,
       allowPartialFill: false,
-      gasLimit: 11500000,
+      compatibilityMode: slippage > 1 ? true : false, // Enabling to secure swap for tokens with internal commitions 
+      gasLimit: 11500000
     };
     let swapTxHash = "";
     await Forever(async () => {
@@ -52,6 +54,14 @@ export const PrepareForSwap = async (
         );
       }, 2);
       process.exit(1);
+    } else {
+      await Forever(async () => {
+        await Telegram.SendMessage(
+          Args.botToken,
+          Args.chatId,
+          `[SUCCEEDED] Swap transaction done`
+        );
+      }, 2);
     }
     if (!Args.preAuth) {
       await Forever(async () => {

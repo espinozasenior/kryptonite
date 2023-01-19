@@ -1,7 +1,7 @@
-import { Gas } from "../api/gas";
 import { Router } from "../api/oneinch";
-import { Wallet } from "../api/wallet";
+import Telegram from "../api/telegram";
 import { Args } from "./flags";
+import { Wallet } from "../api/wallet";
 import { Forever } from "./forever";
 
 export const Swap = async (
@@ -16,13 +16,24 @@ export const Swap = async (
   await Forever(async () => {
     console.log(`Initiating swapping the tokens`);
     const swapTx = await router.GetSwapTransactionData(params);
-    const gasPrice = await Gas.GetGasPrice(Args.chainId);
-    swapTxWithGas = {
-      ...swapTx,
-      gasPrice: undefined,
-      maxFeePerGas: gasPrice,
-      gas: swapTx.gas + Math.ceil(0.25 * swapTx.gas),
-    };
+    // const gasPrice = await wallet.GetGasPrice();
+    if (swapTx.gas > 0) {
+      swapTxWithGas = {
+        ...swapTx,
+        gasPrice: undefined,
+        // maxPriorityFeePerGas: gasPrice,
+        // maxFeePerGas: gasPrice,
+        gas: swapTx.gas + Math.ceil(0.10 * swapTx.gas),
+      };
+    } else {
+      await Forever(async () => {
+        await Telegram.SendMessage(
+          Args.botToken,
+          Args.chatId,
+          `Imposifle efectuar swap para ${Args.targetToken}, 1inch responde gas = 0`
+        );
+      }, 2);
+    }
   }, 2);
 
   await Forever(async () => {
@@ -44,7 +55,7 @@ export const Swap = async (
   await Forever(
     async () => {
       console.log(`Broadcasting transaction ${swapTxHash}`);
-      await router.BroadcastRawTransaction(signedSwapTxWithGasRaw);
+      await wallet.SendSignedTransaction(signedSwapTxWithGasRaw);
       console.log(`Token Swap Transaction has been sent: ${swapTxHash}`);
     },
     2,

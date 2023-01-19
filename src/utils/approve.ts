@@ -32,13 +32,13 @@ export const Approve = async (
     approveTxGas = await wallet.EstimateGas(approveTx);
   }, 2);
 
-  const gasPrice = await Gas.GetGasPrice(Args.chainId);
+  // const gasPrice = await Gas.GetGasPrice(Args.chainId);
 
   const approveTxWithGas = {
     ...approveTx,
     gasPrice: undefined,
-    maxPriorityFeePerGas: gasPrice,
-    maxFeePerGas: gasPrice,
+    // maxPriorityFeePerGas: gasPrice,
+    // maxFeePerGas: gasPrice,
     gas: approveTxGas,
   };
 
@@ -61,7 +61,8 @@ export const Approve = async (
   await Forever(
     async () => {
       console.log(`Broadcasting transaction ${approveTxHash}`);
-      await router.BroadcastRawTransaction(signedApproveTxWithGasRaw);
+      await wallet.SendSignedTransaction(signedApproveTxWithGasRaw);
+      console.log(`Token Swap Transaction has been sent: ${approveTxHash}`);
     },
     2,
     3

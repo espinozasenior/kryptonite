@@ -4,7 +4,7 @@ import Web3 from "web3";
 export class Gas {
   static GetGasPrice = async (chainId: number): Promise<string> => {
     let URL = "";
-    if (chainId === 1) {
+    if (chainId === 1 || chainId === 42161) {
       URL = "https://ethgasstation.info/json/ethgasAPI.json";
     } else if (chainId === 137) {
       URL = "https://gasstation-mainnet.matic.network/v2";
@@ -16,7 +16,7 @@ export class Gas {
     })
       .then((response) => response.data)
       .then((response: any) => {
-        if (chainId === 1) {
+        if (chainId === 1 || chainId === 42161) {
           return Web3.utils
             .toBN(
               `${Math.ceil(Number(response["fastest"]) / 10)}000000000`
