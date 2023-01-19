@@ -123,7 +123,6 @@ const START_TIME = new Date().getTime();
       chainName = await Chain(Args.chainId)
     }, 2);
 
-
     // ====== END (Main Steps) ======= //
 
     // ====== BEGIN (Loop) ======= //
@@ -202,7 +201,7 @@ const START_TIME = new Date().getTime();
         amount: order?.amount,
         active: order?.active
       }
-
+      
       var conditionOpts = {
         populateFunctions: {
           pnl: function (node: any, comparisions: any, comparison: any, subjectData: any, cb: any) {
